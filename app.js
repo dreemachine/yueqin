@@ -15,7 +15,7 @@ function midiToName(midi) {
 const FRET_COUNT = 12; // open string + 11 frets = one octave
 
 const STRINGS = {
-  low: { base: 55, keys: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', ';', '\''] }, // G3
+  low: { base: 55, keys: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '\\', '.', ';', '\''] }, // G3 (D#4/E4 moved off '.'/'/' — '/' triggers slash-commands in Discord/Foundry, so D#4 took '\' and E4 took the freed-up '.')
   high: { base: 62, keys: ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']'] }, // D4
 };
 
@@ -68,6 +68,19 @@ function render() {
       div.className = 'fret' + (isPentatonic(midi) ? ' scale-note' : '');
       div.dataset.fret = String(fret);
       div.innerHTML = `<span class="key">${cfg.keys[fret]}</span><span class="note">${midiToName(midi)}</span>`;
+      // Pointer events (not separate mouse/touch listeners) so a single
+      // handler covers mouse, touch, and pen. Own "ptr:" id namespace, kept
+      // distinct from keyboard's raw key-character ids, so a keyboard hold
+      // and a pointer press on the same fret don't interfere with each
+      // other's release.
+      const id = `ptr:${string}:${fret}`;
+      div.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        pressNote(id, string, fret);
+      });
+      div.addEventListener('pointerup', () => releaseKey(id));
+      div.addEventListener('pointerleave', () => releaseKey(id));
+      div.addEventListener('pointercancel', () => releaseKey(id));
       container.appendChild(div);
     }
   }
@@ -332,16 +345,18 @@ function pluck(freq, { velocity = 1, sustain = false, attack = true } = {}) {
 
   // Soften the instantaneous silence-to-noise jump at note-start so
   // simultaneous notes (chords) don't sum into a harsh digital edge, but
-  // keep it short and front-loaded (sqrt curve reaches most of its volume
-  // fast, then eases in the rest) rather than a slow linear ramp, which
-  // read as too soft/"chill" instead of a percussive pluck.
+  // keep it short and steeply front-loaded (a cube-root curve reaches
+  // most of its volume almost immediately, then eases in the rest) rather
+  // than a slow linear ramp, which read as too soft/"chill" instead of a
+  // percussive pluck. Shortened and steepened again (18ms sqrt -> 10ms
+  // cube-root) for a more aggressive initial hit.
   // Skipped when a note is escalating from a quick pluck into a held
   // tremolo sustain (see keydown handler) — that quick pluck already
   // provided the attack, so fading this buffer in too would sound like a
   // second, separate hit landing on top of the first.
   if (attack) {
-    const fadeSamples = Math.min(Math.round(sampleRate * 0.018), length);
-    for (let i = 0; i < fadeSamples; i++) data[i] *= Math.sqrt(i / fadeSamples);
+    const fadeSamples = Math.min(Math.round(sampleRate * 0.010), length);
+    for (let i = 0; i < fadeSamples; i++) data[i] *= Math.cbrt(i / fadeSamples);
   }
 
   const src = ctx.createBufferSource();
@@ -387,9 +402,9 @@ function pluck(freq, { velocity = 1, sustain = false, attack = true } = {}) {
 // octaveShift}) over a WebSocket relay so anyone else with the page open
 // hears the same note, re-synthesized locally through this exact same
 // pluck() — no audio streaming, just re-triggering the instrument on their
-// end. Held tremolo-sustain notes (escalateTimers below) aren't broadcast
-// yet — smaller, separate lift, cut from this first pass since quick
-// plucks and song playback already cover the main "hear me play" case.
+// end. Tremolo notes (armTremolo below) aren't broadcast yet — smaller,
+// separate lift, cut from this first pass since quick plucks and song
+// playback already cover the main "hear me play" case.
 const CLIENT_ID = Math.random().toString(36).slice(2);
 const RELAY_URL_KEY = 'yueqinRelayUrl';
 let relaySocket = null;
@@ -679,6 +694,32 @@ document.getElementById('plate-amount').addEventListener('input', (e) => {
 document.getElementById('octave-down').addEventListener('click', () => setOctaveShift(octaveShift - 1));
 document.getElementById('octave-up').addEventListener('click', () => setOctaveShift(octaveShift + 1));
 
+function toggleTremolo() {
+  tremoloArmed = !tremoloArmed;
+  const btn = document.getElementById('tremolo-toggle');
+  btn.classList.toggle('active', tremoloArmed);
+  btn.textContent = `tremolo: ${tremoloArmed ? 'on' : 'off'}`;
+  if (tremoloArmed) {
+    // Also upgrade any note already being held right now, so arming
+    // tremolo mid-hold (rather than before pressing) still works.
+    for (const id of heldKeys) {
+      const info = heldNoteInfo[id];
+      if (info) armTremolo(id, info.string, info.fret);
+    }
+  }
+}
+
+document.getElementById('tremolo-toggle').addEventListener('click', toggleTremolo);
+
+// Spacebar as a keyboard shortcut for the same toggle — every other key on
+// both qwerty rows is already a note, so space is the natural free key, and
+// it's reachable without moving off the note keys mid-performance.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || e.repeat) return;
+  e.preventDefault();
+  toggleTremolo();
+});
+
 const relayUrlInput = document.getElementById('relay-url');
 const relayConnectBtn = document.getElementById('relay-connect');
 const savedRelayUrl = localStorage.getItem(RELAY_URL_KEY);
@@ -686,75 +727,117 @@ if (savedRelayUrl && relayUrlInput) relayUrlInput.value = savedRelayUrl;
 relayConnectBtn?.addEventListener('click', () => connectRelay(relayUrlInput.value.trim()));
 
 // --- input ---
-// A key press always starts as a normal, cheap quick pluck (unchanged,
-// ~19ms to compute — matters for fast melodic runs where every note goes
-// through this). Only if the key is *still held* after one tremolo
-// interval do we pay the much larger cost (~115ms) of rendering a sustain
-// voice — a rare, deliberate gesture, not something every note pays for.
-const TREMOLO_ESCALATE_MS = 150;
+// A key press is always a plain, cheap quick pluck (unchanged, ~19ms to
+// compute — matters for fast melodic runs where every note goes through
+// this) unless tremolo mode is explicitly armed (see the tremolo button /
+// spacebar below) — holding a key/click no longer escalates into tremolo
+// on its own. That auto-escalate-on-hold behavior got removed once the
+// explicit tremolo button existed: with a real toggle available, an
+// implicit one just meant every ordinary held note unexpectedly tremoloed.
+//
 // A held tremolo has no natural end (unlike a quick pluck's fixed decay) —
 // it rides on the underlying sustain buffer's full 20s length otherwise,
 // which is really just "however long the buffer happens to be," not a
-// deliberate limit. Auto-release after a fixed max so an accidentally (or
-// deliberately) long hold can't drone on that long — same graceful release
-// fade as a normal keyup, just triggered by a timer instead of one.
-const TREMOLO_MAX_MS = 6000;
+// deliberate limit. Auto-release after a randomized max so an accidentally
+// (or deliberately) long hold can't drone indefinitely — same graceful
+// release fade as a normal keyup, just triggered by a timer instead of one.
+// Range isn't arbitrary: set against our own transcribed reference
+// recording (TUNE_SEQUENCE below), where actual tremolo/sustain passages
+// run ~0.77-1.99s, averaging ~1.3s — randomizing within that averaged
+// range (rather than one fixed length) means repeated holds don't all cut
+// off at an identical, mechanical-sounding instant.
+const TREMOLO_MAX_MS_MIN = 1300;
+const TREMOLO_MAX_MS_MAX = 1500;
 const heldKeys = new Set();
-const escalateTimers = {};
+const heldNoteInfo = {}; // id -> {string, fret}, so an already-held note can be looked up (e.g. to arm tremolo mid-hold) without parsing the id itself
 const maxDurationTimers = {};
 const sustainVoices = {};
 const quickVoices = {};
+
+// "Tremolo" button/spacebar: the only way a note becomes a tremolo now —
+// arms explicit tremolo mode so the next press (or an already-held note,
+// upgraded in place — see toggleTremolo below) becomes a full tremolo pass
+// instead of a quick pluck.
+let tremoloArmed = false;
+
+// attack defaults to false because the "upgrade an already-held note"
+// path (toggleTremolo below) already got its attack transient from that
+// note's original quick pluck — this sustain voice just needs to take
+// over cleanly after it. Pass attack:true when there's no preceding quick
+// pluck to rely on (i.e. tremolo was already armed at press time — see
+// pressNote below).
+function armTremolo(id, string, fret, { attack = false } = {}) {
+  if (sustainVoices[id]) return;
+  const midi = STRINGS[string].base + fret + octaveShift * OCTAVE_STEP;
+  // sample-backed notes don't support the sustain re-injection trick —
+  // fine for now since no manifest exists yet, but would need handling
+  // if/when real sample recordings are wired in.
+  const voice = pluck(midiToFreq(midi), { sustain: true, attack });
+  sustainVoices[id] = voice;
+  const maxMs = TREMOLO_MAX_MS_MIN + Math.random() * (TREMOLO_MAX_MS_MAX - TREMOLO_MAX_MS_MIN);
+  maxDurationTimers[id] = setTimeout(() => {
+    if (sustainVoices[id] !== voice) return;
+    voice.stop();
+    delete sustainVoices[id];
+  }, maxMs);
+}
+
+// Shared by both keyboard and mouse/touch input — an "id" identifies a held
+// note (string+fret, not a physical key) so a mouse press can reuse exactly
+// the same quick-pluck/tremolo machinery a keypress does, rather than
+// duplicating it.
+function pressNote(id, string, fret) {
+  if (heldKeys.has(id)) return;
+  heldKeys.add(id);
+  heldNoteInfo[id] = { string, fret };
+  ensureAudio();
+
+  if (tremoloArmed) {
+    // Straight into a full tremolo voice, with its own attack — no quick
+    // pluck first. Firing the quick pluck and layering tremolo in later
+    // read as the note playing, pausing, and only then tremoloing,
+    // instead of one continuous tremolo from the start.
+    lightUpFret(string, fret);
+    armTremolo(id, string, fret, { attack: true });
+    return;
+  }
+
+  // playNote() resolves asynchronously (sample-lookup path awaits a
+  // fetch); track its stop handle so a fast tap-and-release can still cut
+  // the quick pluck short instead of it always ringing out in full.
+  playNote(string, fret).then((voice) => {
+    if (!voice) return;
+    if (heldKeys.has(id)) quickVoices[id] = voice;
+    else voice.stop(0.05);
+  });
+}
+
+function releaseKey(id) {
+  heldKeys.delete(id);
+  delete heldNoteInfo[id];
+  clearTimeout(maxDurationTimers[id]);
+  delete maxDurationTimers[id];
+  if (quickVoices[id]) {
+    quickVoices[id].stop();
+    delete quickVoices[id];
+  }
+  if (sustainVoices[id]) {
+    sustainVoices[id].stop();
+    delete sustainVoices[id];
+  }
+}
 
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
   const mapped = KEY_TO_NOTE[key];
-  if (!mapped || heldKeys.has(key)) return;
-  // Several mapped keys (notably '/' for Firefox's quick-find) have
-  // browser-default behavior that would otherwise fire alongside the note.
+  if (!mapped) return;
+  // Some mapped keys have browser-default behavior that would otherwise
+  // fire alongside the note (e.g. '/' triggered Firefox's quick-find,
+  // which is why E4 moved off it — see the STRINGS.low keys above).
   e.preventDefault();
-  heldKeys.add(key);
-  ensureAudio();
-  // playNote() resolves asynchronously (sample-lookup path awaits a
-  // fetch); track its stop handle so a fast tap-and-release can still cut
-  // the quick pluck short instead of it always ringing out in full.
-  playNote(mapped.string, mapped.fret).then((voice) => {
-    if (!voice) return;
-    if (heldKeys.has(key)) quickVoices[key] = voice;
-    else voice.stop(0.05);
-  });
-
-  escalateTimers[key] = setTimeout(() => {
-    if (!heldKeys.has(key)) return;
-    const midi = STRINGS[mapped.string].base + mapped.fret + octaveShift * OCTAVE_STEP;
-    // sample-backed notes don't support the sustain re-injection trick —
-    // fine for now since no manifest exists yet, but would need handling
-    // if/when real sample recordings are wired in.
-    const voice = pluck(midiToFreq(midi), { sustain: true, attack: false });
-    sustainVoices[key] = voice;
-    maxDurationTimers[key] = setTimeout(() => {
-      if (sustainVoices[key] !== voice) return;
-      voice.stop();
-      delete sustainVoices[key];
-    }, TREMOLO_MAX_MS);
-  }, TREMOLO_ESCALATE_MS);
+  pressNote(key, mapped.string, mapped.fret);
 });
-
-function releaseKey(key) {
-  heldKeys.delete(key);
-  clearTimeout(escalateTimers[key]);
-  delete escalateTimers[key];
-  clearTimeout(maxDurationTimers[key]);
-  delete maxDurationTimers[key];
-  if (quickVoices[key]) {
-    quickVoices[key].stop();
-    delete quickVoices[key];
-  }
-  if (sustainVoices[key]) {
-    sustainVoices[key].stop();
-    delete sustainVoices[key];
-  }
-}
 
 window.addEventListener('keyup', (e) => {
   const key = e.key.toLowerCase();

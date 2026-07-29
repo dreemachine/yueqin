@@ -4,12 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Yue-Qin</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
   <main>
     <h1>月琴 <span>yue-qin</span></h1>
-    <p class="hint">Click anywhere to enable audio, then play with your keyboard.</p>
+    <p class="hint">Click anywhere to enable audio, then play with your keyboard or click/tap the frets.</p>
 
     <div class="lute" id="lute">
       <div class="string-row" data-string="high">
@@ -42,6 +42,7 @@
       <button class="song-btn" id="octave-down">▼ octave</button>
       <span class="brightness-label" id="octave-readout">octave: 0</span>
       <button class="song-btn" id="octave-up">▲ octave</button>
+      <button class="song-btn" id="tremolo-toggle">tremolo: off</button>
     </div>
 
     <div class="tone-controls relay-controls">
@@ -58,8 +59,13 @@
       everyone else with this page open and connected hears every note as you
       play it.
     </p>
+
+    <div class="reference-clip">
+      <p class="hint">How it compares to the real thing — the scale section of a real yueqin recording this instrument's tone was tuned against:</p>
+      <video controls preload="metadata" src="scale-reference-clip.mp4"></video>
+    </div>
   </main>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
