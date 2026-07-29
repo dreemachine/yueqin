@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yue-Qin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>月琴 <span>yue-qin</span></h1>
+    <p class="hint">Click anywhere to enable audio, then play with your keyboard.</p>
+
+    <div class="lute" id="lute">
+      <div class="string-row" data-string="high">
+        <div class="string-label">D4 string</div>
+        <div class="frets" id="frets-high"></div>
+      </div>
+      <div class="string-row" data-string="low">
+        <div class="string-label">G3 string</div>
+        <div class="frets" id="frets-low"></div>
+      </div>
+    </div>
+
+    <p class="status" id="status">audio: not started</p>
+
+    <div class="songs" id="songs"></div>
+
+    <div class="tone-controls">
+      <button class="song-btn" id="plate-toggle">plates: harmonic</button>
+      <label class="brightness-label">
+        brightness
+        <input type="range" id="brightness" min="0" max="100" value="0" />
+      </label>
+      <label class="brightness-label">
+        plate amount
+        <input type="range" id="plate-amount" min="0" max="150" value="100" />
+      </label>
+    </div>
+
+    <div class="tone-controls">
+      <button class="song-btn" id="octave-down">▼ octave</button>
+      <span class="brightness-label" id="octave-readout">octave: 0</span>
+      <button class="song-btn" id="octave-up">▲ octave</button>
+    </div>
+
+    <div class="tone-controls relay-controls">
+      <label class="brightness-label">
+        relay url
+        <input type="text" id="relay-url" placeholder="wss://your-relay.example.com" />
+      </label>
+      <button class="song-btn" id="relay-connect">connect</button>
+      <span class="brightness-label" id="relay-status">relay: not connected</span>
+    </div>
+    <p class="hint relay-hint">
+      Playing live for others? Run the relay in <code>relay/</code>, tunnel it
+      (e.g. ngrok), paste its <code>wss://</code> URL above and hit connect —
+      everyone else with this page open and connected hears every note as you
+      play it.
+    </p>
+  </main>
+
+  <script src="app.js?v=1"></script>
+</body>
+</html>
