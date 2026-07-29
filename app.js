@@ -570,8 +570,11 @@ const SCALE_SEQUENCE = [
 // voice rather than rapid separate triggers, since the tremolo technique
 // itself is the point, not simplified away.
 const TUNE_SEQUENCE = [
-  // [midi, time, duration, sustain]
-  [72, 0.00, 5.45, true],
+  // [midi, time, duration, sustain, exact?] — exact:true (the opening
+  // note only) exempts it from the live-tremolo-matching duration cap
+  // below: it's a real transcribed performance sustain, not an ornament,
+  // and its actual 5.45s length is worth keeping for accuracy.
+  [72, 0.00, 5.45, true, true],
   [77, 5.45, 1.09, true],
   [72, 6.54, 1.03, true],
   [74, 7.57, 0.77, true],
@@ -590,9 +593,9 @@ const TUNE_SEQUENCE = [
 ];
 
 function buildAbsoluteSong(sequence) {
-  const notes = sequence.map(([midi, time, duration, sustain]) => {
+  const notes = sequence.map(([midi, time, duration, sustain, exact = false]) => {
     const loc = midiToStringFretOctave(midi);
-    return { ...loc, time, duration, sustain };
+    return { ...loc, time, duration, sustain, exact };
   });
   const duration = Math.max(...notes.map((n) => n.time + n.duration));
   return { notes, duration };
@@ -646,16 +649,18 @@ function playSong(id) {
         activeSongSustainVoices.push(voice);
         // Cap at the same randomized tremolo-hold length live play now
         // uses (see TREMOLO_MAX_MS_MIN/MAX below), rather than letting the
-        // note ring for its full originally-transcribed length — some of
-        // those (one runs 5.45s) were real performance sustains, but they
-        // read as a much longer, droning technique than what a live
-        // tremolo now sounds/behaves like. Never lengthens a note that was
-        // already shorter than that range (Math.min).
+        // note ring for its full originally-transcribed length — most of
+        // these read as a much longer, droning technique than what a live
+        // tremolo now sounds/behaves like. note.exact opts a note out of
+        // this (the opening 5.45s sustain only) — a real transcribed
+        // performance hold worth keeping at its actual length, not just
+        // an ornament to match live tremolo's feel.
         const capMs = TREMOLO_MAX_MS_MIN + Math.random() * (TREMOLO_MAX_MS_MAX - TREMOLO_MAX_MS_MIN);
+        const stopMs = note.exact ? note.duration * 1000 : Math.min(note.duration * 1000, capMs);
         const stopTimeout = setTimeout(() => {
           voice.stop();
           activeSongSustainVoices = activeSongSustainVoices.filter((v) => v !== voice);
-        }, Math.min(note.duration * 1000, capMs));
+        }, stopMs);
         activeSongTimeouts.push(stopTimeout);
       } else {
         playNote(note.string, note.fret, note.octaveShift);
