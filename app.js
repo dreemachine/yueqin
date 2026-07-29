@@ -601,6 +601,48 @@ function buildAbsoluteSong(sequence) {
   return { notes, duration };
 }
 
+// Verse 1 (opening) of 春江曲 Chun Jiang Qu ("Spring River Melody"), lyrics
+// by Guo Zhen [656-713] — from John Thompson's staff-notation transcription
+// (silkqin.com) of the historical qin piece. Hand-transcribed by dree
+// reading the actual staff notation (not audio pitch-detection like the
+// other reference songs above), then cross-checked note-by-note against
+// the sheet before being trusted — an early AI-assisted attempt at the
+// same piece had real errors (wrong measure numbering, wrong note count)
+// that this transcription doesn't have. Durations follow the notated
+// half/quarter/whole values at a moderate tempo (quarter = 0.5s), adjusted
+// by ear rather than treated as fixed. No real recording exists for this
+// piece the way SCALE/TUNE_SEQUENCE have, so tremolo placement here is a
+// judgment call, not something measured: put on the longer (half/whole)
+// notes, left off the quicker quarter notes passing between them —
+// mirrors how the real TUNE_SEQUENCE recording actually behaves (longer
+// notes sustained, quick notes plucked). The closing note is a tied
+// whole+whole in the original (8 beats) — kept at full length (exact:true)
+// as a natural ending ring-out, the same treatment given to TUNE_SEQUENCE's
+// opening sustain.
+const SPRING_RIVER_SEQUENCE = [
+  // [midi, time, duration, sustain, exact?]
+  [67, 0.00, 1.0, true],           // G4
+  [67, 1.00, 0.5, false],          // G4
+  [72, 1.50, 0.5, false],          // C5
+  [69, 2.00, 1.0, true],           // A4
+  [69, 3.00, 1.0, true],           // A4
+  [69, 4.00, 0.5, false],          // A4
+  [72, 4.50, 0.5, false],          // C5
+  [74, 5.00, 1.0, true],           // D5
+  [67, 6.00, 1.0, true],           // G4
+  [67, 7.00, 1.0, true],           // G4
+  [64, 8.00, 1.0, true],           // E4
+  [67, 9.00, 0.5, false],          // G4
+  [69, 9.50, 0.5, false],          // A4
+  [67, 10.00, 1.0, true],          // G4
+  [67, 11.00, 1.0, true],          // G4
+  [64, 12.00, 0.5, false],         // E4
+  [71, 12.50, 0.5, false],         // B4
+  [72, 13.00, 0.5, false],         // C5
+  [71, 13.50, 0.5, false],         // B4
+  [71, 14.00, 4.0, true, true],    // B4 — tied whole+whole, held at full length
+];
+
 const SONGS = {
   moliHua: {
     title: 'Mo Li Hua (茉莉花)',
@@ -613,6 +655,10 @@ const SONGS = {
   tune: {
     title: 'Tune (reference recording)',
     ...buildAbsoluteSong(TUNE_SEQUENCE),
+  },
+  springRiver: {
+    title: 'Spring River Melody (春江曲)',
+    ...buildAbsoluteSong(SPRING_RIVER_SEQUENCE),
   },
 };
 
@@ -627,7 +673,45 @@ function stopSong() {
   activeSongSustainVoices = [];
   activeSongId = null;
   document.querySelectorAll('.song-btn').forEach((b) => b.classList.remove('playing'));
+  stopTutorial();
   setOctaveShift(0);
+}
+
+// Tutorial mode: instead of auto-playing a song, step through its notes one
+// at a time — highlight the next expected fret (a distinct, persistent
+// "hint" glow, not the same as .lit's brief flash for an actually-played
+// note) and wait for the player to actually hit it before advancing.
+// Wrong presses aren't blocked or flagged — it's still a real instrument
+// underneath, the hint just doesn't move until the right one lands.
+let tutorialSongId = null;
+let tutorialIndex = 0;
+
+function clearTutorialHint() {
+  document.querySelectorAll('.fret.hint').forEach((el) => el.classList.remove('hint'));
+}
+
+function showTutorialHint() {
+  clearTutorialHint();
+  const song = SONGS[tutorialSongId];
+  const note = song.notes[tutorialIndex];
+  setOctaveShift(note.octaveShift);
+  const el = document.querySelector(`#frets-${note.string} .fret[data-fret="${note.fret}"]`);
+  if (el) el.classList.add('hint');
+}
+
+function startTutorial(id) {
+  stopSong();
+  tutorialSongId = id;
+  tutorialIndex = 0;
+  document.querySelector(`.song-btn[data-song="${id}"]`)?.classList.add('playing');
+  showTutorialHint();
+}
+
+function stopTutorial() {
+  tutorialSongId = null;
+  tutorialIndex = 0;
+  clearTutorialHint();
+  document.querySelectorAll('.song-btn').forEach((b) => b.classList.remove('playing'));
 }
 
 function playSong(id) {
@@ -681,7 +765,7 @@ function renderSongs() {
     btn.className = 'song-btn';
     btn.dataset.song = id;
     btn.textContent = `▶ ${song.title}`;
-    btn.addEventListener('click', () => playSong(id));
+    btn.addEventListener('click', () => (tutorialMode ? startTutorial(id) : playSong(id)));
     container.appendChild(btn);
   }
   const stopBtn = document.createElement('button');
@@ -723,6 +807,17 @@ function toggleTremolo() {
 }
 
 document.getElementById('tremolo-toggle').addEventListener('click', toggleTremolo);
+
+// Tutorial mode: a toggle that changes what clicking a song button does
+// (start a step-through tutorial instead of auto-playing), rather than a
+// separate button per song.
+let tutorialMode = false;
+document.getElementById('tutorial-toggle').addEventListener('click', (e) => {
+  tutorialMode = !tutorialMode;
+  e.target.classList.toggle('active', tutorialMode);
+  e.target.textContent = `tutorial: ${tutorialMode ? 'on' : 'off'}`;
+  if (!tutorialMode) stopTutorial();
+});
 
 // Spacebar as a keyboard shortcut for the same toggle — every other key on
 // both qwerty rows is already a note, so space is the natural free key, and
@@ -804,6 +899,15 @@ function pressNote(id, string, fret) {
   heldKeys.add(id);
   heldNoteInfo[id] = { string, fret };
   ensureAudio();
+
+  if (tutorialSongId) {
+    const expected = SONGS[tutorialSongId].notes[tutorialIndex];
+    if (expected && expected.string === string && expected.fret === fret) {
+      tutorialIndex++;
+      if (tutorialIndex >= SONGS[tutorialSongId].notes.length) stopTutorial();
+      else showTutorialHint();
+    }
+  }
 
   if (tremoloArmed) {
     // Straight into a full tremolo voice, with its own attack — no quick

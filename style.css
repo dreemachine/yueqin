@@ -74,10 +74,12 @@ h1 span {
 .frets {
   flex: 1;
   display: flex;
+  align-items: flex-start;
   gap: 0.4rem;
 }
 
 .fret {
+  position: relative;
   flex: 1;
   padding: 0.75rem 0.25rem;
   background: var(--wood-light);
@@ -114,6 +116,21 @@ h1 span {
   background: var(--lit);
   color: #241b22;
   transform: scale(0.95);
+}
+
+/* Tutorial mode's "play this next" hint — a small steady glowing bar
+   floating just above the fret (not a border/outline around the whole
+   button), persistent unlike .lit's brief flash for a note just played. */
+.fret.hint::before {
+  content: '';
+  position: absolute;
+  top: -0.6rem;
+  left: 15%;
+  right: 15%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px 2px var(--accent), 0 0 16px 4px var(--accent);
 }
 
 .status {
