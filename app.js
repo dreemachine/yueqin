@@ -644,10 +644,18 @@ function playSong(id) {
         const midi = STRINGS[note.string].base + note.fret + note.octaveShift * OCTAVE_STEP;
         const voice = pluck(midiToFreq(midi), { sustain: true });
         activeSongSustainVoices.push(voice);
+        // Cap at the same randomized tremolo-hold length live play now
+        // uses (see TREMOLO_MAX_MS_MIN/MAX below), rather than letting the
+        // note ring for its full originally-transcribed length — some of
+        // those (one runs 5.45s) were real performance sustains, but they
+        // read as a much longer, droning technique than what a live
+        // tremolo now sounds/behaves like. Never lengthens a note that was
+        // already shorter than that range (Math.min).
+        const capMs = TREMOLO_MAX_MS_MIN + Math.random() * (TREMOLO_MAX_MS_MAX - TREMOLO_MAX_MS_MIN);
         const stopTimeout = setTimeout(() => {
           voice.stop();
           activeSongSustainVoices = activeSongSustainVoices.filter((v) => v !== voice);
-        }, note.duration * 1000);
+        }, Math.min(note.duration * 1000, capMs));
         activeSongTimeouts.push(stopTimeout);
       } else {
         playNote(note.string, note.fret, note.octaveShift);
