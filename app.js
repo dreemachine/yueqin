@@ -687,17 +687,35 @@ let tutorialSongId = null;
 let tutorialIndex = 0;
 
 function clearTutorialHint() {
-  document.querySelectorAll('.fret.hint').forEach((el) => el.classList.remove('hint'));
+  document.getElementById('tutorial-hint-bar')?.classList.remove('visible');
 }
 
+// Positions the hint bar via JS coordinates (relative to #lute) rather
+// than attaching it to the fret itself — see the CSS comment on
+// .tutorial-hint-bar for why: a fret-attached version perturbed the whole
+// row's flex layout in a way that was surprisingly hard to fully undo.
 function showTutorialHint() {
-  clearTutorialHint();
   const song = SONGS[tutorialSongId];
   const note = song.notes[tutorialIndex];
   setOctaveShift(note.octaveShift);
   const el = document.querySelector(`#frets-${note.string} .fret[data-fret="${note.fret}"]`);
-  if (el) el.classList.add('hint');
+  const bar = document.getElementById('tutorial-hint-bar');
+  if (!el || !bar) return;
+  const lute = document.getElementById('lute');
+  const fretRect = el.getBoundingClientRect();
+  const luteRect = lute.getBoundingClientRect();
+  bar.style.left = `${fretRect.left - luteRect.left + fretRect.width * 0.15}px`;
+  bar.style.width = `${fretRect.width * 0.7}px`;
+  bar.style.top = `${fretRect.top - luteRect.top - 8}px`;
+  bar.classList.add('visible');
 }
+
+// Reposition the hint if the window resizes while a tutorial is active —
+// otherwise the bar (positioned in absolute pixels) drifts away from the
+// fret it's supposed to be pointing at.
+window.addEventListener('resize', () => {
+  if (tutorialSongId) showTutorialHint();
+});
 
 function startTutorial(id) {
   stopSong();

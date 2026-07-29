@@ -47,6 +47,7 @@ h1 span {
 }
 
 .lute {
+  position: relative;
   background: rgba(69, 59, 74, 0.82);
   backdrop-filter: blur(6px);
   border-radius: 24px;
@@ -74,12 +75,10 @@ h1 span {
 .frets {
   flex: 1;
   display: flex;
-  align-items: flex-start;
   gap: 0.4rem;
 }
 
 .fret {
-  position: relative;
   flex: 1;
   padding: 0.75rem 0.25rem;
   background: var(--wood-light);
@@ -121,16 +120,27 @@ h1 span {
 /* Tutorial mode's "play this next" hint — a small steady glowing bar
    floating just above the fret (not a border/outline around the whole
    button), persistent unlike .lit's brief flash for a note just played. */
-.fret.hint::before {
-  content: '';
+/* Tutorial mode's "play this next" hint bar. NOT a pseudo-element of the
+   fret button — that approach (tried first) put an absolutely-positioned
+   box on a flex item and, even with transform-only positioning, still
+   caused the *row's own* height to inflate by the bar's offset amount,
+   pushing the other string row down (a real, oddly persistent flexbox
+   quirk with position:absolute + flex sizing, not something obvious from
+   reading the CSS). This is a fully independent element positioned via
+   JS to the target fret's screen coordinates instead — outside the flex
+   layout entirely, so it can't perturb it. */
+.tutorial-hint-bar {
   position: absolute;
-  top: -0.6rem;
-  left: 15%;
-  right: 15%;
   height: 4px;
   border-radius: 2px;
   background: var(--accent);
   box-shadow: 0 0 8px 2px var(--accent), 0 0 16px 4px var(--accent);
+  pointer-events: none;
+  display: none;
+}
+
+.tutorial-hint-bar.visible {
+  display: block;
 }
 
 .status {
