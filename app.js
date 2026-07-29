@@ -526,44 +526,55 @@ function buildSong(sequence, eighthSeconds) {
 
 // Transcribed from a real solo yueqin recording: a straight ascending
 // two-octave scale (C4-B5, technical range demo — not pentatonic, so not
-// idiomatic repertoire) leading into the opening of the actual tune.
-// Pitch/onset detection via autocorrelation (YIN-style) + RMS-rise onset
-// finding, corrected for the pitch detector's octave and 1/3-subharmonic
-// lock errors by cross-checking against the scale's own verified stepwise
-// structure and, for the tune, re-seeding the correction at the section
-// boundary rather than assuming melodic continuity from the scale's last
-// note (an earlier pass got this wrong — see project notes).
-// `sustain: true` notes are tremolo/held passages in the real performance
-// (repeated rapid re-plucks the onset detector caught as distinct hits,
-// merged back into one note each) — represented as one continuous sustain
-// voice rather than rapid separate triggers, since the tremolo technique
-// itself is the point, not simplified away.
-const SCALE_TUNE_SEQUENCE = [
+// idiomatic repertoire). Split out as its own piece from what was
+// originally one combined "scale + tune" transcription — see
+// TUNE_SEQUENCE below for the melody that immediately follows it in the
+// actual recording. Pitch/onset detection via autocorrelation (YIN-style)
+// + RMS-rise onset finding, corrected for the pitch detector's octave and
+// 1/3-subharmonic lock errors by cross-checking against the scale's own
+// verified stepwise structure.
+const SCALE_SEQUENCE = [
   // [midi, time, duration, sustain]
   [60, 0.00, 0.54, false], [62, 0.54, 0.44, false], [64, 0.98, 0.43, false],
   [65, 1.41, 0.37, false], [67, 1.78, 0.39, false], [69, 2.17, 0.37, false],
   [71, 2.54, 0.38, false], [72, 2.92, 0.37, false], [74, 3.29, 0.38, false],
   [76, 3.67, 0.34, false], [77, 4.01, 0.38, false], [79, 4.39, 0.35, false],
   [81, 4.74, 0.38, false], [83, 5.12, 0.47, false],
-  [72, 5.59, 5.45, true],
-  [77, 11.04, 1.09, true],
-  [72, 12.13, 1.03, true],
-  [74, 13.16, 0.77, true],
-  [76, 13.93, 0.78, true],
-  [72, 14.71, 0.58, false],
-  [69, 15.29, 1.91, true],
-  [72, 17.20, 0.26, false],
-  [74, 17.46, 0.80, true],
-  [77, 18.26, 0.28, false],
-  [72, 18.54, 0.26, false],
-  [69, 18.80, 0.27, false],
-  [72, 19.07, 0.55, false],
-  [77, 19.62, 0.83, true],
-  [76, 20.45, 1.99, true],
-  [81, 22.44, 1.44, true],
 ];
 
-function buildScaleTuneSong(sequence) {
+// The opening of the actual tune, immediately following the scale above in
+// the same reference recording — split out as its own playable piece.
+// Times re-zeroed to this section's own start (originally began at 5.59s
+// into the combined recording). Same transcription method as the scale;
+// for this section specifically, the pitch-detector correction was
+// re-seeded at this boundary rather than assumed continuous from the
+// scale's last note (an earlier pass got this wrong — see project notes).
+// `sustain: true` notes are tremolo/held passages in the real performance
+// (repeated rapid re-plucks the onset detector caught as distinct hits,
+// merged back into one note each) — represented as one continuous sustain
+// voice rather than rapid separate triggers, since the tremolo technique
+// itself is the point, not simplified away.
+const TUNE_SEQUENCE = [
+  // [midi, time, duration, sustain]
+  [72, 0.00, 5.45, true],
+  [77, 5.45, 1.09, true],
+  [72, 6.54, 1.03, true],
+  [74, 7.57, 0.77, true],
+  [76, 8.34, 0.78, true],
+  [72, 9.12, 0.58, false],
+  [69, 9.70, 1.91, true],
+  [72, 11.61, 0.26, false],
+  [74, 11.87, 0.80, true],
+  [77, 12.67, 0.28, false],
+  [72, 12.95, 0.26, false],
+  [69, 13.21, 0.27, false],
+  [72, 13.48, 0.55, false],
+  [77, 14.03, 0.83, true],
+  [76, 14.86, 1.99, true],
+  [81, 16.85, 1.44, true],
+];
+
+function buildAbsoluteSong(sequence) {
   const notes = sequence.map(([midi, time, duration, sustain]) => {
     const loc = midiToStringFretOctave(midi);
     return { ...loc, time, duration, sustain };
@@ -577,9 +588,13 @@ const SONGS = {
     title: 'Mo Li Hua (茉莉花)',
     ...buildSong(MOLIHUA_SEQUENCE, 0.25), // 96 eighths @ 0.25s = 24s
   },
-  scaleAndTune: {
-    title: 'Scale + Tune (reference recording)',
-    ...buildScaleTuneSong(SCALE_TUNE_SEQUENCE),
+  scale: {
+    title: 'Scale (reference recording)',
+    ...buildAbsoluteSong(SCALE_SEQUENCE),
+  },
+  tune: {
+    title: 'Tune (reference recording)',
+    ...buildAbsoluteSong(TUNE_SEQUENCE),
   },
 };
 
@@ -677,8 +692,16 @@ relayConnectBtn?.addEventListener('click', () => connectRelay(relayUrlInput.valu
 // interval do we pay the much larger cost (~115ms) of rendering a sustain
 // voice — a rare, deliberate gesture, not something every note pays for.
 const TREMOLO_ESCALATE_MS = 150;
+// A held tremolo has no natural end (unlike a quick pluck's fixed decay) —
+// it rides on the underlying sustain buffer's full 20s length otherwise,
+// which is really just "however long the buffer happens to be," not a
+// deliberate limit. Auto-release after a fixed max so an accidentally (or
+// deliberately) long hold can't drone on that long — same graceful release
+// fade as a normal keyup, just triggered by a timer instead of one.
+const TREMOLO_MAX_MS = 6000;
 const heldKeys = new Set();
 const escalateTimers = {};
+const maxDurationTimers = {};
 const sustainVoices = {};
 const quickVoices = {};
 
@@ -707,7 +730,13 @@ window.addEventListener('keydown', (e) => {
     // sample-backed notes don't support the sustain re-injection trick —
     // fine for now since no manifest exists yet, but would need handling
     // if/when real sample recordings are wired in.
-    sustainVoices[key] = pluck(midiToFreq(midi), { sustain: true, attack: false });
+    const voice = pluck(midiToFreq(midi), { sustain: true, attack: false });
+    sustainVoices[key] = voice;
+    maxDurationTimers[key] = setTimeout(() => {
+      if (sustainVoices[key] !== voice) return;
+      voice.stop();
+      delete sustainVoices[key];
+    }, TREMOLO_MAX_MS);
   }, TREMOLO_ESCALATE_MS);
 });
 
@@ -715,6 +744,8 @@ function releaseKey(key) {
   heldKeys.delete(key);
   clearTimeout(escalateTimers[key]);
   delete escalateTimers[key];
+  clearTimeout(maxDurationTimers[key]);
+  delete maxDurationTimers[key];
   if (quickVoices[key]) {
     quickVoices[key].stop();
     delete quickVoices[key];
